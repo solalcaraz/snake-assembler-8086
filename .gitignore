@@ -1,0 +1,11 @@
+# Salida del ensamblador y del linker
+*.EXE
+*.exe
+*.OBJ
+*.obj
+*.MAP
+*.map
+*.ERR
+*.err
+*.LST
+*.lst
