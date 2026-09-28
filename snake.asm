@@ -310,12 +310,12 @@ fruta_sortear:
 
     pop ax                      ; mismos ticks, ahora para la columna
     mov bl, col
-    dec dl
+    dec bl
     xor dx, dx
     xor bh, bh
     div bx
-    mov frutax, dl
-    inc frutax
+    mov frutax, dl              ; resto entre 0 y col-2
+    inc frutax                  ; +1 para no caer sobre el borde izquierdo
 
     cmp frutax, cl
     jne fruta_posDistinta
