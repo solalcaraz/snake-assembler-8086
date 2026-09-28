@@ -1,8 +1,18 @@
+; =============================================================================
+; SNAKE para DOS en assembler 8086 (MASM/TASM, modelo small)
+;
+; Todo se dibuja escribiendo directo en la memoria de video de modo texto
+; (segmento B800h): cada celda ocupa 2 bytes, el carácter y su atributo de
+; color, así que la celda (fila, col) está en el offset fila*160 + col*2.
+; El teclado se lee por BIOS (int 16h) sin bloquear y el tiempo se mide con
+; el contador de ticks del reloj (int 1Ah, ~18,2 ticks por segundo).
+; =============================================================================
+
 .8086
 .model small
 .stack 100h
 
-;constantes bordes del campo
+; Bordes del campo de juego, en coordenadas de pantalla (fila, columna).
 izq equ 0
 arriba equ 2
 fil equ 20
@@ -10,7 +20,17 @@ col equ 40
 derecha equ izq+col
 fondo equ arriba+fil
 
-.data          
+; =============================================================================
+; DATOS
+;
+; La víbora se guarda como una lista de segmentos de 3 bytes cada uno:
+;   byte 0     carácter a dibujar
+;   bytes 1-2  posición como word: byte bajo = columna, byte alto = fila
+; "cabeza" es el primer segmento y su carácter (^ v < >) indica además hacia
+; dónde se mueve. Inmediatamente después en memoria viene "snake", el cuerpo,
+; y la lista termina en el primer segmento en cero.
+; =============================================================================
+.data
     msg db "Jueguito snake",0
     manual db 0ah,0dh,"Movete con WASD",0ah,0dh,"Presiona Q para salir",0ah,0dh,"Presiona cualquier tecla para empezar.$"
     quitmsg db "Gracias por jugar a snake c:",0
@@ -23,245 +43,261 @@ fondo equ arriba+fil
     frutax db 8
     frutay db 8
     perdio db 0
-    salir db 0   
-	delayticks db 5
-    color db 01101010b
+    salir db 0
+    delayticks db 5             ; ticks de reloj por paso; el main lo cambia para las pantallas finales
+    color db 01101010b          ; atributo del campo: fondo marrón (6), texto verde claro (10)
 
 .code
 
+; =============================================================================
+; PROGRAMA PRINCIPAL
+;
+; Muestra las instrucciones, espera una tecla, dibuja el tablero y entra al
+; loop del juego. Cada vuelta del loop es un paso: esperar, mover la víbora,
+; leer la tecla (que recién afecta al paso siguiente), reponer la fruta si hace
+; falta y redibujar. Termina por game over o porque el jugador apretó Q.
+; =============================================================================
 main proc far
 	mov ax, @data
-	mov ds, ax 
-	
-	mov ax, 0b800H
+	mov ds, ax
+
+	mov ax, 0b800H              ; ES apunta a la memoria de video durante todo el programa
 	mov es, ax
 
-	mov ax, 0003H 	;limpio la pantalla
+	mov ax, 0003H               ; modo texto 80x25; de paso limpia la pantalla
 	int 10H
-	
+
 	lea bx, msg
 	xor dx, dx
 	call escribirString
-	
+
 	lea dx, manual
 	mov ah, 09h
 	int 21h
-	
-	mov ah, 07h
+
+	mov ah, 07h                 ; espera una tecla cualquiera
 	int 21h
 	mov ah, 03h
 	int 10H
-    call imprimirCuadro
-    
-    
-mainloop:
-    call delay             
+    call dibujarTablero
+
+
+loopJuego:
+    call delay
     lea bx, msg
 	xor dx, dx
 	call escribirString
-	
-    call muevoSnake
+
+    call moverSnake
     cmp perdio,1
-    je gameover_mainloop
-    
-    call calcularCabeza
+    je finPerdio
+
+    call leerDireccion
     cmp salir, 1
-    je quieresalir
-    call operacionFruta
-    call imprimirCampo
-    jmp mainloop
-    
-gameover_mainloop: 
+    je finSalir
+    call generarFruta
+    call dibujarCampo
+    jmp loopJuego
+
+finPerdio:
     mov ax, 0003H
 	int 10H
     mov delayticks, 100
     mov dx, 0000H
     lea bx, gameovermsg
     call escribirString
-    call delay    
-    jmp quit_mainloop    
-    
-quieresalir:
+    call delay
+    jmp finPrograma
+
+finSalir:
     mov ax, 0003H
-	int 10H    
+	int 10H
     mov delayticks, 50
     mov dx, 0000H
     lea bx, quitmsg
     call escribirString
-    call delay    
-    jmp quit_mainloop    
+    call delay
+    jmp finPrograma
 
-quit_mainloop:
+finPrograma:
     mov ax, 0003H
-    int 10h    
+    int 10h
     mov ax, 4c00h
-    int 21h  
+    int 21h
 main endp
-  
-  
-;ESPERA CIERTA CANTIDAD DE SEGUNDOS  
-delay proc
-    ; Obtener el tiempo actual
-    mov ah, 00         ; Función 2 de la interrupción 1Ah (servicio para leer la hora)
-    int 1Ah           ; Llamar a la interrupción 1Ah
 
-    ; Guardar el tiempo actual en BX
+
+; Espera "delayticks" ticks de reloj.
+; Solo compara el byte bajo de la diferencia: alcanza porque las esperas son
+; cortas (menos de 128 ticks, jl compara con signo).
+delay proc
+    mov ah, 00                  ; int 1Ah, función 00h: contador de ticks en CX:DX
+    int 1Ah
     mov bx, dx
 
 delay_loop:
-    ; Obtener el tiempo actual
-    int 1Ah          
-    ; Comparar con el tiempo objetivo
+    int 1Ah
     sub dx, bx
     cmp dl, delayticks
     jl delay_loop
-	
+
     ret
 
 delay endp
 
-operacionFruta proc
-	mov ch, frutay
+; Si la fruta fue comida, elige una posición nueva al azar dentro del campo.
+; El azar sale del contador de ticks del reloj.
+generarFruta proc
+	mov ch, frutay              ; posición anterior, para no repetirla
 	mov cl, frutax
-randofrutar:
+fruta_sortear:
 	cmp hayfruta, 1
-	je chau
-	mov ah,00  ;int para llamar a la hora del reloj
-	int 1Ah    ;guarda en al, cx, dx
-	push dx	   ;guardo la hora
+	je fruta_fin
+	mov ah,00
+	int 1Ah
+	push dx
 	mov ax, dx
 	xor dx, dx
 	xor bh, bh
 	mov bl, fil
 	dec bl
 	div bx
-	mov frutaY, dl ;resto de la division esta en el rango de 0-19
-	inc frutaY	   ;no queremos que quede dentro de la pared :)
-	
-	pop ax	  ;reutilizo la hora
+	mov frutaY, dl              ; resto entre 0 y fil-2
+	inc frutaY                  ; +1 para no caer sobre el borde superior
+
+	pop ax                      ; mismos ticks, ahora para la columna
 	mov bl, col
 	dec dl
 	xor dx, dx
 	xor bh, bh
 	div bx
-	mov frutaX, dl ;resto de la division esta en el rango de 0-39
-	inc frutaX	   
+	mov frutaX, dl
+	inc frutaX
 
-	cmp frutaX, cl ;no puede caer en la misma posicion
-	jne correcto
+	cmp frutaX, cl
+	jne fruta_posDistinta
 	cmp frutaY, ch
-	jne correcto
-	jmp randofrutar
-	
-correcto:
+	jne fruta_posDistinta
+	jmp fruta_sortear
+
+fruta_posDistinta:
+	; La cabeza avanza de a 2 columnas y arranca en una par, así que solo pasa
+	; por columnas pares: una fruta en columna impar sería imposible de comer.
 	mov al, frutax
 	ror al, 1
-	jc randofrutar
-	
+	jc fruta_sortear
+
 	add frutay, arriba
 	add frutax, izq
 
-;Chequeo colisiones para randomizar de nuevo
+	; Si cae sobre la víbora, se sortea de nuevo.
 	mov dh, frutay
 	mov dl, frutax
-	call leoCaracter
+	call leerCaracter
 	cmp al, 'O'
-	je randofrutar
+	je fruta_sortear
 	cmp al, '^'
-	je randofrutar
+	je fruta_sortear
 	cmp al, '<'
-	je randofrutar
+	je fruta_sortear
 	cmp al, '>'
-	je randofrutar
+	je fruta_sortear
 	cmp al, 'v'
-	je randofrutar
-chau:
+	je fruta_sortear
+fruta_fin:
 	ret
-operacionFruta endp
-	
-muevoSnake proc
+generarFruta endp
+
+; Avanza la víbora un paso en la dirección de la cabeza y detecta si comió
+; la fruta o si chocó (contra una pared o contra su propio cuerpo).
+; Cada segmento del cuerpo pasa a la posición del que tenía adelante.
+moverSnake proc
 	lea bx, cabeza
 	xor ax, ax
 	mov al, [bx]
-	push ax    ;guardamos la cabecita
+	push ax                     ; carácter de la cabeza = dirección
 	inc bx
-	mov ax, [bx]
-	add bx, 2	;seguimos de largo, nos topamos con el cuerpo en el data segment
+	mov ax, [bx]                ; posición de la cabeza, que hereda el primer segmento
+	add bx, 2
 	xor cx, cx
-muevoLoop:
-	mov si, [bx]     ;recorremos el cuerpo
-    test si, [bx]    ;si SI AND [bx] es cero, nos salimos del cuerpo. 
-    jz nosSalimos	 ;(el arreglo cuerpo está relleno de ceros al final)
-    inc cx     		
-    inc bx			
+mover_cuerpo:
+	mov si, [bx]
+    test si, [bx]               ; word en cero: se terminó la lista
+    jz mover_finCuerpo
+    inc cx
+    inc bx
     mov dx,[bx]
-    mov [bx], ax	;a medida q recorremos guardamos en dx la direccion del segmento
-    mov ax,dx
+    mov [bx], ax                ; el segmento toma la posición del anterior...
+    mov ax,dx                   ; ...y la suya pasa al siguiente
     add bx,2
-    jmp muevoLoop
-nosSalimos:
-	pop ax 		;recupero la cabeza
-	push dx 	;guardo la direc. del ultimo secmento
+    jmp mover_cuerpo
+mover_finCuerpo:
+	pop ax
+	push dx                     ; posición que dejó libre la cola
 	lea bx, cabeza
 	inc bx
 	mov dx, [bx]
-	
+
+	; En horizontal avanza de a 2 columnas porque las celdas de texto son el
+	; doble de altas que de anchas: así se mueve a la misma velocidad visual.
     cmp al, '<'
-    jne mal1
+    jne mover_noIzq
     dec dl
     dec dl
-    jmp listocabeza
-mal1:
+    jmp mover_cabezaLista
+mover_noIzq:
     cmp al, '>'
-    jne mal2            
-    inc dl 
+    jne mover_noDer
     inc dl
-    jmp listocabeza
-    
-mal2:
+    inc dl
+    jmp mover_cabezaLista
+
+mover_noDer:
     cmp al, '^'
-    jne mal3
+    jne mover_abajo
     dec dh
-    jmp listocabeza
-    
-mal3:
-    inc dh ;si o si es V
-    
-listocabeza:
-	mov [bx], dx  ;en dx esta la proxima coordenada del snake
-	call leoCaracter
-	
+    jmp mover_cabezaLista
+
+mover_abajo:
+    inc dh
+
+mover_cabezaLista:
+	mov [bx], dx
+	call leerCaracter           ; qué hay en la celda a la que llega la cabeza
+
 	cmp bl, '@'
-	je comioFruta
-	
+	je mover_comio
+
 	mov cx, dx
 	pop dx
 	cmp bl, 'O'
-	je gameOver
-	mov bl, 0
+	je mover_perdio
+	mov bl, 0                   ; borra la cola
 	call escribirCaracter
 	mov dx, cx
-	
+
 	cmp dh, arriba
-    je gameOver
+    je mover_perdio
     cmp dh, fondo
-    je gameOver
+    je mover_perdio
     cmp dl, izq
-    je gameOver
+    je mover_perdio
     cmp dl, derecha
-    je gameOver
+    je mover_perdio
 	ret
-gameOver:
+mover_perdio:
 	inc perdio
 	ret
-comioFruta:
+mover_comio:
+	; Crece: agrega un segmento al final del cuerpo, en la posición que
+	; acaba de dejar la cola (así no se borra en este paso).
 	mov al, largo
 	xor ah,ah
 	lea bx, snake
-	mov cx, 3 ;busco el indice del cuerpo, (largo x 3 (cada segmento tiene 3 bytes))
-	mul cx	
-	
-	pop dx ;direcc. del ultimo segmento de antes
+	mov cx, 3
+	mul cx	                    ; offset del nuevo segmento = largo * 3
+
+	pop dx
 	add bx, ax
 	mov byte ptr ds:[bx], 'O'
 	mov [bx+1], dx
@@ -272,87 +308,93 @@ comioFruta:
 	call escribirCaracter
 	mov hayfruta,0
 	ret
-	
-muevoSnake endp
-	
-escribirString proc     ;escribe string en la posicion del cursor
+
+moverSnake endp
+
+; Escribe el string terminado en 0 apuntado por BX en la fila DH, columna DL.
+; Solo escribe caracteres: conserva el color que ya tenía cada celda.
+escribirString proc
     push dx
     mov ax, dx
     and ax, 0FF00H
     mov al, ah
-    
+
     push bx
     mov bh, 160
     mul bh
-    
+
     pop bx
     and dx, 0FFH
     shl dx,1
     add ax, dx
     mov di, ax
-loop_string:
+escribirString_loop:
 	mov al, [bx]
     test al, al
-    jz salir_string
+    jz escribirString_fin
     mov es:[di], al
     inc di
     inc di
     inc bx
-    jmp loop_string
-salir_string:
+    jmp escribirString_loop
+escribirString_fin:
 	pop dx
     ret
-escribirString endp         
-	
+escribirString endp
 
-		  
-leerTecla proc   ;DL contiene el carácter ASCII si se presiona una tecla, sino dl contiene 0.
 
-    mov ah, 01H ;01H Verifica si hay tecla presionada
-    int 16H 
-    jnz teclaSi ;Salta si se presiono una tecla
-    xor dl, dl  ;dl=0
+
+; Lee una tecla sin bloquear. Devuelve su ASCII en DL, o 0 si no hay ninguna.
+leerTecla proc
+
+    mov ah, 01H                 ; hay tecla en el buffer? (ZF=1 si no)
+    int 16H
+    jnz leerTecla_hay
+    xor dl, dl
     ret
-teclaSi:
-    mov ah, 00H ;00H Lee código de tecla presionada
-    int 16H     ;Llama a la interrupción 16H
-    mov dl,al   ;guarda la tecla en dl
+leerTecla_hay:
+    mov ah, 00H                 ; la saca del buffer
+    int 16H
+    mov dl,al
     ret
-	
-leerTecla endp        
 
-leoCaracter proc ;recibo coordenadas dh = fila, dl = columna, devuelvo en bl el ascii que se encuentre ahi.
+leerTecla endp
+
+; Devuelve en BL el carácter que hay en la fila DH, columna DL.
+leerCaracter proc
 	call posCursor
 	mov ah, 8h
 	int 10h
 	mov bl, al
 	ret
-leoCaracter endp
+leerCaracter endp
 
 
-imprimirCampo proc
+; Redibuja el puntaje, la víbora y la fruta. Ninguna de estas cosas se borra:
+; moverSnake ya borró la cola, así que alcanza con pisar lo que cambió.
+dibujarCampo proc
 	lea bx, puntaje
 	mov dx, 0100h
 	call escribirString
-	add dl, 9
-	call posCursor
+	add dl, 9                   ; largo de "Puntaje: "
+	call posCursor              ; imprimirNum escribe por DOS, en la posición del cursor
 	mov al, largo
 	dec al
 	xor ah, ah
 	call imprimirNum
 	lea si, cabeza
     push cx
-imprimirLoop:
-    mov ch, 10010011b 
+dibujarCampo_loop:
+    mov ch, 10010011b
 	mov bl, ds:[si]
 	test bl, bl
-	jz imprimirListo
-	mov dx, ds:[si+1]   ;recorro el cuerpo del snake, imprimo todo hasta ver un cero
+	jz dibujarCampo_fruta
+	mov dx, ds:[si+1]
 	call escribirCaracter
-	add si,3			;cada segmento ocupa tres direcciones.
-	jmp imprimirLoop
+	add si,3
+	jmp dibujarCampo_loop
 
-imprimirListo:
+dibujarCampo_fruta:
     pop cx
 	mov bl, '@'
 	mov dh, frutay
@@ -360,125 +402,128 @@ imprimirListo:
 	call escribirCaracter
 	mov hayfruta, 1
 	ret
-imprimirCampo endp
+dibujarCampo endp
 
-calcularCabeza proc
+; Lee WASD para cambiar la dirección y Q para salir.
+; Ignora el giro de 180 grados: la cabeza chocaría con su propio cuerpo.
+leerDireccion proc
 
-    call leerTecla     ;llama a la subrutina anterior que solo se usa para la funcion compara
-    cmp dl, 0          ;si dl es 0 no se presiono ninguna tecla
-    je opSiguiente4
-    
-    cmp dl, 'w'             ;compara letra con "WASD" una por una
-    jne opSiguiente1        ;si encuentra una igualdad cambia la direccion del snake, sino salta a la siguiente comparacion
-    cmp cabeza, 'v'  		;si las direcciones actual y nueva son opuestas, no hace nada
-    je  opSiguiente4
+    call leerTecla
+    cmp dl, 0
+    je leerDireccion_q
+
+    cmp dl, 'w'
+    jne leerDireccion_noW
+    cmp cabeza, 'v'
+    je  leerDireccion_q
     mov cabeza, '^'
     ret
-opSiguiente1:
+leerDireccion_noW:
     cmp dl, 'a'
-    jne opSiguiente2
+    jne leerDireccion_noA
     cmp cabeza, '>'
-    je  opSiguiente4
+    je  leerDireccion_q
     mov cabeza, '<'
     ret
-opSiguiente2:
+leerDireccion_noA:
     cmp dl, 's'
-    jne opSiguiente3
+    jne leerDireccion_noS
     cmp cabeza, '^'
-    je  opSiguiente4
+    je  leerDireccion_q
     mov cabeza, 'v'
     ret
-opSiguiente3:
+leerDireccion_noS:
     cmp dl, 'd'
-    jne opSiguiente4
+    jne leerDireccion_q
     cmp cabeza, '<'
-    je  opSiguiente4
+    je  leerDireccion_q
     mov cabeza,'>'
-opSiguiente4:
-    cmp dl, 'q'   ;letra con la que se va a salir del juego
-    je finCompara
-    ret    
+leerDireccion_q:
+    cmp dl, 'q'
+    je leerDireccion_salir
+    ret
 
-finCompara:
+leerDireccion_salir:
     inc salir
     ret
-	
-calcularCabeza endp
-		  
-          
-imprimirCuadro proc
-    ;Limpiar la pantalla
+
+leerDireccion endp
+
+
+; Dibuja el borde del campo con '#' (en sentido horario desde la esquina
+; superior izquierda) y rellena el interior con espacios del color del campo.
+dibujarTablero proc
     mov ah, 00h
     mov al, 03h
     int 10h
-;Dimensiones del campo (80x25)
 
-;Borde izquierdo
     mov dh, arriba
     mov dl, izq
-    mov cx, col ;Número de columnas maximas
-    mov bl, '#' 
-    mov si, 03h   
-imp1:
+    mov cx, col
+    mov bl, '#'
+    mov si, 03h
+tablero_bordeSuperior:
     call escribirCaracter
     inc dl
-    loop imp1
+    loop tablero_bordeSuperior
     mov cx, fil
-imp2:
+tablero_bordeDerecho:
     call escribirCaracter
     inc dh
-    loop imp2
+    loop tablero_bordeDerecho
     mov cx, col
-imp3:
+tablero_bordeInferior:
     call escribirCaracter
     dec dl
-    loop imp3
+    loop tablero_bordeInferior
     mov cx, fil
-imp4:
+tablero_bordeIzquierdo:
     call escribirCaracter
     dec dh
-    loop imp4
+    loop tablero_bordeIzquierdo
 
-    mov dh, 3
-    mov dl, 1
+    mov dh, arriba+1
+    mov dl, izq+1
     mov bl, ' '
-impcol:
-    mov dl, 1
+tablero_rellenoFila:
+    mov dl, izq+1
     mov cx, col
     dec cx
-col_loop:
+tablero_rellenoCol:
     call escribirCaracter
     inc dl
-    loop col_loop
+    loop tablero_rellenoCol
     inc dh
-    cmp dh, 22
-    jl impcol
+    cmp dh, fondo
+    jl tablero_rellenoFila
 
 
 
 ret
 
-imprimirCuadro endp
+dibujarTablero endp
 
-posCursor proc     
-    mov ah, 02h       	;Subservicio 02h: Establecer posición del cursor
-    mov bh, 00h			;dh = fila, dl = columna, bh = pagina
-    int 10h           
+; Mueve el cursor de la página 0 a la fila DH, columna DL.
+posCursor proc
+    mov ah, 02h
+    mov bh, 00h
+    int 10h
     ret
     posCursor endp
 
 
 
+; Escribe el carácter BL con el color del campo en la fila DH, columna DL.
 escribirCaracter proc
 
     push dx
     mov ax, dx
     and ax, 0FF00H
     mov al, ah
-    
+
     push bx
     mov bh, 160
-    mul bh 
+    mul bh
     pop bx
     and dx, 0FFH
     shl dx,1
@@ -488,31 +533,34 @@ escribirCaracter proc
     mov es:[di], bl
     mov es:[di+1], bh
     pop dx
-    ret    			
-escribirCaracter endp		  
-	
+    ret
+escribirCaracter endp
+
+; Imprime por DOS el dígito DL (0-9) en la posición del cursor.
 imprimirDigito proc
     add dl, '0'
     mov ah, 02H
     int 21H
     ret
-imprimirDigito endp   
-	
-imprimirNum proc   ;en ax el numero a imprimir
+imprimirDigito endp
+
+; Imprime AX en decimal. Recursiva: divide por 10 y apila el resto, de modo
+; que los dígitos salen en orden al ir volviendo de las llamadas.
+imprimirNum proc
     test ax,ax
-    jz esCero
+    jz imprimirNum_cero
     xor dx, dx
-   
+
     mov bx,10
     div bx
-    push dx			  ;guarda los restos en el stack
-    call imprimirNum  ;recursividad en assembler? inaudito
-    pop dx			  ;los escupe en orden opuesto
-    call imprimirDigito	;y los imprime
+    push dx
+    call imprimirNum
+    pop dx
+    call imprimirDigito
     ret
-esCero:
-    mov ah, 02  
-    ret    
-imprimirNum endp  	
-	  
-end
+imprimirNum_cero:
+    mov ah, 02
+    ret
+imprimirNum endp
+
+end main
