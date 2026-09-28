@@ -40,6 +40,10 @@ col     equ 40
 derecha equ izq+col
 fondo   equ arriba+fil
 
+; Celdas que la cabeza puede ocupar: las filas interiores por las columnas
+; interiores pares (ver generarFruta). Es el largo máximo posible de la víbora.
+maxCeldas equ (fil-1) * (col/2-1)
+
 .data
     msg         db "Jueguito snake",0
     manual      db 0ah,0dh,"Movete con WASD",0ah,0dh,"Presiona Q para salir",0ah,0dh,"Presiona cualquier tecla para empezar.$"
@@ -48,8 +52,8 @@ fondo   equ arriba+fil
     puntaje     db "Puntaje: ",0
 
     cabeza      db "^",10,10
-    snake       db "O",10,11, 3*15 DUP(0)
-    largo       db 1            ; segmentos del cuerpo; el puntaje es largo-1
+    snake       db "O",10,11, 3*(maxCeldas-1) DUP(0)   ; lugar para el cuerpo más largo posible + el 0 final
+    largo       dw 1            ; segmentos del cuerpo; el puntaje es largo-1
 
     hayfruta    db 1            ; 0 = la fruta fue comida y hay que generar otra
     frutax      db 8
@@ -227,8 +231,7 @@ mover_perdio:
 mover_comio:
     ; Crece: agrega un segmento al final del cuerpo, en la posición que
     ; acaba de dejar la cola (así no se borra en este paso).
-    mov al, largo
-    xor ah, ah
+    mov ax, largo
     lea bx, snake
     mov cx, 3
     mul cx                      ; offset del nuevo segmento = largo * 3
@@ -413,9 +416,8 @@ dibujarCampo proc
     call escribirString
     add dl, 9                   ; largo de "Puntaje: "
     call posCursor              ; imprimirNum escribe por DOS, en la posición del cursor
-    mov al, largo
-    dec al
-    xor ah, ah
+    mov ax, largo
+    dec ax
     call imprimirNum
 
     lea si, cabeza
