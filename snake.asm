@@ -22,9 +22,9 @@
 ; =============================================================================
 ; 1. CONSTANTES Y DATOS
 ;
-; El campo es un rectángulo de col x fil celdas cuya esquina superior
-; izquierda está en (arriba, izq). Las filas 0 y 1 quedan libres para el
-; título y el puntaje.
+; El borde del campo es un rectángulo que va de (arriba, izq) a
+; (fondo, derecha); la víbora y la fruta se mueven por el interior. Las filas
+; 0 y 1 quedan libres para el título y el puntaje.
 ;
 ; La víbora se guarda como una lista de segmentos de 3 bytes cada uno:
 ;   byte 0     carácter a dibujar
