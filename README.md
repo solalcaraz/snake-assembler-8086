@@ -46,20 +46,9 @@ El programa está en un solo archivo, [`snake.asm`](snake.asm), dividido en cinc
 
 ## Cómo correrlo
 
-Necesitás [DOSBox](https://www.dosbox.com/) con TASM y TLINK en una carpeta accesible desde DOS. Dentro de DOSBox:
+Se ensambla con TASM y se corre en DOSBox.
 
-```
-mount c C:\ruta\a\la\carpeta
-uta\la\carpeta
-c:
-tasm snake.asm
-tlink snake.obj
-snake
-```
-
-Si no tenés TASM, también se puede ensamblar con [JWasm](https://github.com/Baron-von-Riedesel/JWasm), que es libre y corre en Windows: `jwasm -mz snake.asm` genera `SNAKE.EXE` directo, sin linker.
-
-**Controles:** `W` `A` `S` `D` para moverte y `Q` para salir. Van en minúscula, así que con Bloq Mayús activado no responden.
+**Controles:** `W` `A` `S` `D` para moverte y `Q` para salir.
 
 ## Qué aprendí
 
