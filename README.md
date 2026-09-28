@@ -2,11 +2,10 @@
 
 El clásico Snake, escrito en assembler x86 de 16 bits para DOS.
 
-Es el trabajo práctico final de la materia **SPD**, de la **Tecnicatura en Programación Informática de la UNSAM** (2023). Lo hicimos en grupo.
-
 ## Problema que resuelve
 
-La consigna era hacer un juego en tiempo real que se pudiera jugar. Usamos las interrupciones del BIOS y de DOS y la memoria de video, y resolvimos a mano:
+Es el trabajo práctico final que hice en 2023 para la materia **SPD** (Tecnicatura en Programación Informática, UNSAM), junto con **Damián Palomba**, **Christian León Cáceres**, **Víctor Manquez** y **Gabriel Carpio**. 
+La consigna pedía hacer un juego en tiempo real que se pudiera jugar, usando las interrupciones del BIOS y de DOS y la memoria de video. Sin librerías de por medio, hubo que resolver a mano:
 
 - dibujar en pantalla y con color,
 - leer el teclado sin frenar el juego,
