@@ -483,18 +483,19 @@ calcularOffset proc
 calcularOffset endp
 
 ; Imprime AX en decimal. Recursiva: divide por 10 y apila el resto, de modo
-; que los dígitos salen en orden al ir volviendo de las llamadas.
+; que los dígitos salen en orden al ir volviendo de las llamadas. Divide antes
+; de preguntar si terminó para que el 0 también imprima un dígito.
 imprimirNum proc
-    test ax, ax
-    jz imprimirNum_fin
     xor dx, dx
     mov bx, 10
     div bx
     push dx
+    test ax, ax
+    jz imprimirNum_digito
     call imprimirNum
+imprimirNum_digito:
     pop dx
     call imprimirDigito
-imprimirNum_fin:
     ret
 imprimirNum endp
 
